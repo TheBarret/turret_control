@@ -11,7 +11,7 @@ class Config:
     FPS = 30
     WINDOW_SIZE = (1024, 600)
     # physics settings
-    GRAVITY = 9.81 / 60
+    GRAVITY = 9.81 / 30
     AIR_RESISTANCE = 0.01
     # turret settings
     BARREL_LENGTH = 20
