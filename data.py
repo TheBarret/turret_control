@@ -8,11 +8,13 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     # sim settings
-    FPS = 30
+    FPS = 60
     WINDOW_SIZE = (1024, 600)
+    
     # physics settings
-    GRAVITY = 9.81 / 30
+    GRAVITY = 9.81 / FPS
     AIR_RESISTANCE = 0.01
+    
     # turret settings
     BARREL_LENGTH = 20
     MIN_ANGLE = 0
@@ -21,8 +23,6 @@ class Config:
     MIN_POWER = 5
     MAX_POWER = 50
     POWER_STEP = 1
-    # projectile lifetime cap
-    
     
     COLORS = {
         'BLACK': (0, 0, 0),
@@ -45,31 +45,23 @@ class Projectile:
         self.trajectory = [pos.copy()]
         self.contact = None
         self.flight_time = 0
-        self.radius = 2
+        self.radius = 4
         self.particles = []
-        self.particle_config = {
-            'size_range': (2, 6),           # (min, max) particle sizes
+        self.hitdata = ''
+        self.trail_config = {
+            'size_range': (1, 5),           # (min, max) particle sizes
             'lifetime_range': (5, 20),      # (min, max) particle lifetime in frames
             'emission_rate': 2,             # particles per frame
-            'speed_range': (-0.5, 1.0),     # (min, max) particle speed
-            'spread_angle': 180,            # degrees of spread from center
-            'color_map': {                  # size-based color mapping
-                2: (255, 100, 100),         # small
-                4: (255, 100, 100),         # medium
-                5: (200, 27, 27),           # larger
-                6: (255, 255, 27)           # largest
-            }
+            'speed_range': (0, 0.8),        # (min, max) particle speed
+            'spread_angle': 25,             # degrees of spread from center
+            'color_map': {5: (128, 128, 128), 10: (128, 128, 128), 20: (128, 128, 128)}
         }
         self.explosion_config = {
-            'particle_count': 25,
-            'size_range': (3, 7),
-            'speed_range': (2.0, 15.0),
-            'lifetime_range': (5, 20),
-            'colors': [
-                (128, 128, 128),
-                (228, 228, 228),
-                (128, 128, 128)
-            ]
+            'particle_count': 10,
+            'size_range': (20, 20),
+            'speed_range': (1, 3.0),
+            'lifetime_range': (30, 40),
+            'colors': [(128, 128, 128),(128, 128, 5),(128, 128, 5)]
         }
         self.is_exploding = False
         self.explosion_particles = []
@@ -113,8 +105,8 @@ class Projectile:
             p['pos'] += p['vel']
             p['vel'][1] += self.config.GRAVITY * 0.2
             fade = p['lifetime'] / p['max_lifetime']
-            p['color'] = tuple(int(c * fade) for c in p['color'])
-            p['size'] *= 0.98  # shrink particles over time
+            p['color'] = tuple(255-int(c * fade) for c in p['color'])
+            p['size'] *= 0.98
             updated_particles.append(p)
         if len(updated_particles) > 0:
             self.explosion_particles = updated_particles
@@ -122,11 +114,11 @@ class Projectile:
         self.is_exploding = False
         
     def create_particles(self):
-        for _ in range(self.particle_config['emission_rate']):
-            size        = random.uniform(*self.particle_config['size_range'])
-            lifetime    = random.randint(*self.particle_config['lifetime_range'])
-            speed       = random.uniform(*self.particle_config['speed_range'])
-            angle       = random.uniform(-self.particle_config['spread_angle'], self.particle_config['spread_angle'])
+        for _ in range(self.trail_config['emission_rate']):
+            size        = random.uniform(*self.trail_config['size_range'])
+            lifetime    = random.randint(*self.trail_config['lifetime_range'])
+            speed       = random.uniform(*self.trail_config['speed_range'])
+            angle       = random.uniform(-self.trail_config['spread_angle'], self.trail_config['spread_angle'])
             direction   = np.array([np.cos(np.radians(angle)) * speed, -np.sin(np.radians(angle)) * speed])
             color = self.get_interpolated_color(size) # interpolate color
             self.particles.append({
@@ -139,7 +131,7 @@ class Projectile:
             })
     
     def get_interpolated_color(self, size):
-        color_map = self.particle_config['color_map']
+        color_map = self.trail_config['color_map']
         sizes = sorted(color_map.keys())
         # handle edge cases
         if size <= sizes[0]: return color_map[sizes[0]]
@@ -165,7 +157,7 @@ class Projectile:
             updated_particles.append(p)
         self.particles = updated_particles
 
-    def update(self, obstacles: List[pygame.Rect]) -> None:
+    def update(self, terrain, obstacles: List[pygame.Rect]) -> None:
         # explode if uncaught
         if not self.alive and not self.is_exploding:
             self.ignite()
@@ -183,30 +175,43 @@ class Projectile:
         self.trajectory.append(self.pos.copy())
         self.flight_time += 1
         
-        # Check collisions
+        # check obstacles
         for obstacle in obstacles:
             if obstacle.collidepoint(*self.pos):
+                self.hitdata = 'obstacle'
                 self.alive = False
                 self.contact = self.pos.copy()
                 self.ignite()
                 return
-        
-        # Check bounds
-        if (self.pos[0] < 0 or 
-            self.pos[0] > self.config.WINDOW_SIZE[0] or
-            self.pos[1] > self.config.WINDOW_SIZE[1]):
+                
+        # check terrain
+        if terrain.check_collision(self.pos):
+            terrain.apply_explosion(self.pos, random.randrange(10,30))
+            self.hitdata = 'terrain'
             self.alive = False
             self.contact = self.pos.copy()
             self.ignite()
             return
             
-        # Check lifetime
+        # check bounds
+        if (self.pos[0] < 0 or 
+            self.pos[0] > self.config.WINDOW_SIZE[0] or
+            self.pos[1] > self.config.WINDOW_SIZE[1]):
+            self.hitdata = 'bounds'
+            self.alive = False
+            self.contact = self.pos.copy()
+            self.ignite()
+            return
+            
+        # check lifetime
         self.lifetime += 1
         if self.lifetime > self.lifetime_m:
+            self.hitdata = 'despawn'
             self.alive = False
             self.ignite()
             self.contact = self.pos.copy()
- 
+            return
+            
     def draw(self, screen: pygame.Surface) -> None:
         if self.alive and not self.is_exploding:
             self.emit(screen)
@@ -215,7 +220,8 @@ class Projectile:
             pygame.draw.circle(screen, self.config.COLORS['GRAY'], self.pos.astype(int), self.radius)    
         if not self.alive and self.is_exploding:
             for p in self.explosion_particles:
-                pygame.draw.circle(screen, p['color'], p['pos'].astype(int), int(p['size']))
+                #pygame.draw.circle(screen, p['color'], p['pos'].astype(int), int(p['size']))
+                pygame.draw.rect(screen, p['color'], (p['pos'][0], p['pos'][1], int(p['size']), int(p['size'])))
                 
     def get_metrics(self) -> dict:
         if len(self.trajectory) < 3 or self.contact is None:
@@ -265,5 +271,88 @@ class Projectile:
             'distance': np.linalg.norm(self.contact - self.origin),
             'time': self.flight_time,
             'altitude': min(p[1] for p in self.trajectory),
-            'contact': self.contact.copy()
+            'contact': self.contact.copy(),
+            'hitdata': self.hitdata
         }
+
+class Terrain:
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.surface = pygame.Surface((width, height))
+        # transparent background
+        self.surface.fill((135, 206, 235))  # Sky blue
+        self.ground_color = (139, 69, 19)   # Brown
+        self.height_map = []
+        # empty terrain
+        self.generate_terrain()
+        # collision mask
+        self.mask = pygame.mask.from_surface(self.surface)
+        
+    def generate_terrain(self):
+        # allocate surface
+        self.surface.fill((135, 206, 235))
+        
+        # height map
+        self.height_map = []
+        y = self.height * 0.7  # Start at 70% of screen height
+        
+        # smoothing using interpolation
+        control_points = []
+        num_control_points = 10
+        for i in range(num_control_points):
+            x = i * (self.width / (num_control_points - 1))
+            y = self.height * 0.7 + random.randint(-50, 50)
+            control_points.append((x, y))
+            
+        # interpolate
+        for x in range(self.width):
+            # find surrounding
+            for i in range(len(control_points) - 1):
+                if control_points[i][0] <= x <= control_points[i + 1][0]:
+                    # lerp
+                    x1, y1 = control_points[i]
+                    x2, y2 = control_points[i + 1]
+                    t = (x - x1) / (x2 - x1)
+                    y = y1 + t * (y2 - y1)
+                    self.height_map.append(int(y))
+                    break
+        
+        # create terrain polygon
+        # add top terrain points
+        terrain_points = []
+        for x in range(self.width):
+            terrain_points.append((x, self.height_map[x]))
+        # add bottom corners to complete the polygon
+        terrain_points.append((self.width, self.height))  # bottom right
+        terrain_points.append((0, self.height))           # bottom left
+        
+        # Draw the terrain
+        pygame.draw.polygon(self.surface, self.ground_color, terrain_points)
+
+    def create_explosion_mask(self, center: tuple, radius: int) -> pygame.mask.Mask:
+        # Create circular explosion mask
+        explosion_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        explosion_surf.fill((0, 0, 0, 0))  # Make sure surface is transparent
+        pygame.draw.circle(explosion_surf, (255, 255, 255, 255), (radius, radius), radius)
+        return pygame.mask.from_surface(explosion_surf)
+
+    def apply_explosion(self, pos: tuple, radius: int):
+        x, y = int(pos[0] - radius), int(pos[1] - radius)
+        temp_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(temp_surf, (135, 206, 235), (radius, radius), radius)
+        self.surface.blit(temp_surf, (x, y))
+        self.mask = pygame.mask.from_surface(self.surface)
+        return
+
+    def check_collision(self, pos: tuple) -> bool:
+        x, y = int(pos[0]), int(pos[1])
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return False
+        try:
+            return self.surface.get_at((x, y)) == self.ground_color
+        except IndexError:
+            return False
+
+    def draw(self, screen: pygame.Surface):
+        screen.blit(self.surface, (0, 0))

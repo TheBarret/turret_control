@@ -1,9 +1,11 @@
 import numpy as np
 import pygame
 import uuid
+
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
-from data import Projectile, Config
+
+from data import Projectile, Terrain, Config
 
 class Turret:
     def __init__(self, pos: np.ndarray, config: Config):
@@ -15,7 +17,6 @@ class Turret:
         self.angle = 50.0
         self.power = 11.0
         self.projectile = None
-
         
     def adjust_angle(self, delta: float) -> None:
         self.angle = np.clip(self.angle + delta, self.config.MIN_ANGLE, self.config.MAX_ANGLE)
@@ -39,10 +40,10 @@ class Turret:
             -np.sin(np.radians(self.angle)) * self.config.BARREL_LENGTH
         ])
     
-    def update(self, obstacles: List[pygame.Rect]) -> Optional[dict]:
+    def update(self, terrain, obstacles: List[pygame.Rect]) -> Optional[dict]:
         metrics = None
         if self.projectile:
-            self.projectile.update(obstacles)
+            self.projectile.update(terrain , obstacles)
             if not self.projectile.is_active():
                 metrics = self.projectile.get_metrics()
                 self.projectile = None
@@ -52,13 +53,9 @@ class Turret:
     def draw(self, screen: pygame.Surface, font: Optional[pygame.font.Font] = None) -> None:
         # Draw barrel
         barrel_end = self.get_barrel_end()
-        pygame.draw.line(screen, self.config.COLORS['WHITE'], 
-                        self.pos.astype(int), barrel_end.astype(int), 3)
-        
+        pygame.draw.line(screen, self.config.COLORS['GRAY'], self.pos.astype(int), barrel_end.astype(int), 3)
         # Draw base
-        pygame.draw.circle(screen, self.config.COLORS['WHITE'], 
-                         self.pos.astype(int), 8)
-        
+        pygame.draw.circle(screen, self.config.COLORS['RED'], self.pos.astype(int), 8)
         # Draw projectile if exists
         if self.projectile:
             self.projectile.draw(screen)
@@ -78,17 +75,13 @@ class Game:
         pygame.display.set_caption("Turret Training Ground")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 24)
-        
-        # Create turret at starting position
-        start_pos = np.array([50, config.WINDOW_SIZE[1] - 50], dtype=float)
+        # create terrain
+        self.terrain = Terrain(config.WINDOW_SIZE[0], config.WINDOW_SIZE[1])
+        # create turret at starting position
+        start_pos = np.array([50, config.WINDOW_SIZE[1] / 2  - 50], dtype=float)
         self.turret = Turret(start_pos, config)
-        
-        # Create obstacles
-        self.obstacles = [
-            pygame.Rect(400, 200, 50, 400),  # Vertical wall
-            pygame.Rect(0, config.WINDOW_SIZE[1] - 20, 
-                       config.WINDOW_SIZE[0], 20)  # Ground
-        ]
+        # create obstacles
+        self.obstacles = [pygame.Rect(400, 200, 50, 400)]
         
     def handle_input(self) -> bool:
         for event in pygame.event.get():
@@ -113,17 +106,25 @@ class Game:
         while running:
             # Handle input
             running = self.handle_input()
-            
-            # Update game state
-            metrics = self.turret.update(self.obstacles)
-            #if metrics:  # Projectile landed
-            #    annotation = [f"{key}: {value}" for key, value in metrics.items()]
-            #    print(f"{annotation}")
-            
-            # Draw everything
             self.screen.fill(self.config.COLORS['BLACK'])
-            for obstacle in self.obstacles:
-                pygame.draw.rect(self.screen, self.config.COLORS['GRAY'], obstacle)
+
+            # draw terrain
+            self.terrain.draw(self.screen)
+            
+            # draw obstacles
+            if self.obstacles:
+                for obstacle in self.obstacles:
+                    pygame.draw.rect(self.screen, self.config.COLORS['GRAY'], obstacle)
+            
+            # update game objects
+            metrics = self.turret.update(self.terrain, self.obstacles)
+            if metrics:
+                annotation = [f"{key}: {value}" for key, value in metrics.items()]
+                print("--[Projectile Metrics]------------------------------------")
+                print("\n".join(annotation))
+      
+                    
+            # draw turret
             self.turret.draw(self.screen, self.font)
             
             pygame.display.flip()
